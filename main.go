@@ -301,12 +301,12 @@ func main() {
 				var result struct {
 					APower float64 `json:"apower"`
 				}
-				if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-					resp.Body.Close()
-					log.Printf("poll shelly decode: %v", err)
+				decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+				_ = resp.Body.Close()
+				if decodeErr != nil {
+					log.Printf("poll shelly decode: %v", decodeErr)
 					continue
 				}
-				resp.Body.Close()
 				a.processWatts(context.Background(), result.APower)
 			}
 		}()
