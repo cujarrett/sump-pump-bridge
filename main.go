@@ -105,6 +105,53 @@ func writeJSONError(w http.ResponseWriter, msg string, code int) {
 	w.Write(b) //nolint:errcheck
 }
 
+// processWatts applies the wattage reading: updates metrics and publishes a NATS event on
+// state transitions (idle→running or running→idle). Safe to call from multiple goroutines.
+func (a *app) processWatts(ctx context.Context, watts float64) {
+	if watts < 0 {
+		watts = 0
+	}
+	running := watts >= a.threshold
+
+	if a.wattsGauge != nil {
+		a.wattsGauge.Set(watts)
+	}
+	if a.runningGauge != nil {
+		if running {
+			a.runningGauge.Set(1)
+		} else {
+			a.runningGauge.Set(0)
+		}
+	}
+
+	a.mu.Lock()
+	changed := running != a.prevRunning
+	if changed {
+		a.prevRunning = running
+	}
+	a.mu.Unlock()
+
+	if changed {
+		subject := "home.appliance.sump-pump.idle"
+		if running {
+			subject = "home.appliance.sump-pump.running"
+			if a.runsTotal != nil {
+				a.runsTotal.Inc()
+			}
+		}
+		if a.js != nil {
+			payload, _ := json.Marshal(map[string]float64{"watts": watts})
+			pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			if _, err := a.js.Publish(pubCtx, subject, payload); err != nil {
+				log.Printf("nats publish %s: %v", subject, err)
+			} else {
+				log.Printf("published %s (%.1fW)", subject, watts)
+			}
+		}
+	}
+}
+
 func (a *app) webhookHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost && r.Method != http.MethodGet {
 		writeJSONError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -134,51 +181,10 @@ func (a *app) webhookHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, `provide {"apower":<watts>} in body or ?apower= query param`, http.StatusBadRequest)
 		return
 	}
-	if watts < 0 {
-		watts = 0
-	}
+
+	a.processWatts(r.Context(), watts)
 
 	running := watts >= a.threshold
-
-	if a.wattsGauge != nil {
-		a.wattsGauge.Set(watts)
-	}
-	if a.runningGauge != nil {
-		if running {
-			a.runningGauge.Set(1)
-		} else {
-			a.runningGauge.Set(0)
-		}
-	}
-
-	// Publish to NATS only on state transitions to avoid flooding the stream.
-	a.mu.Lock()
-	changed := running != a.prevRunning
-	if changed {
-		a.prevRunning = running
-	}
-	a.mu.Unlock()
-
-	if changed {
-		subject := "home.appliance.sump-pump.idle"
-		if running {
-			subject = "home.appliance.sump-pump.running"
-			if a.runsTotal != nil {
-				a.runsTotal.Inc()
-			}
-		}
-		if a.js != nil {
-			payload, _ := json.Marshal(map[string]float64{"watts": watts})
-			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-			defer cancel()
-			if _, err := a.js.Publish(ctx, subject, payload); err != nil {
-				log.Printf("nats publish %s: %v", subject, err)
-			} else {
-				log.Printf("published %s (%.1fW)", subject, watts)
-			}
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"watts":%.1f,"running":%t}`, watts, running) //nolint:errcheck
 }
@@ -271,6 +277,41 @@ func main() {
 	}()
 
 	log.Printf("sump-pump-bridge %s listening on :%s (threshold=%.0fW)", version, port, threshold)
+
+	// Polling fallback: if SHELLY_URL is set, poll PM1.GetStatus every POLL_INTERVAL (default 15s).
+	// This catches runs that the Shelly fails to deliver via webhook (repeat_period=0, no retry).
+	if shellyURL := os.Getenv("SHELLY_URL"); shellyURL != "" {
+		pollInterval := 15 * time.Second
+		if s := os.Getenv("POLL_INTERVAL"); s != "" {
+			if d, err := time.ParseDuration(s); err == nil && d > 0 {
+				pollInterval = d
+			}
+		}
+		httpClient := &http.Client{Timeout: 5 * time.Second}
+		go func() {
+			log.Printf("polling %s/rpc/PM1.GetStatus?id=0 every %v", shellyURL, pollInterval)
+			ticker := time.NewTicker(pollInterval)
+			defer ticker.Stop()
+			for range ticker.C {
+				resp, err := httpClient.Get(shellyURL + "/rpc/PM1.GetStatus?id=0")
+				if err != nil {
+					log.Printf("poll shelly: %v", err)
+					continue
+				}
+				var result struct {
+					APower float64 `json:"apower"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+					resp.Body.Close()
+					log.Printf("poll shelly decode: %v", err)
+					continue
+				}
+				resp.Body.Close()
+				a.processWatts(context.Background(), result.APower)
+			}
+		}()
+	}
+
 	srv := &http.Server{
 		Addr:              ":" + port,
 		Handler:           a.metricsMiddleware(mux),
