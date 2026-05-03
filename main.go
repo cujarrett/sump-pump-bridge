@@ -106,13 +106,12 @@ func writeJSONError(w http.ResponseWriter, msg string, code int) {
 }
 
 func (a *app) webhookHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost && r.Method != http.MethodGet {
+	if r.Method != http.MethodPost {
 		writeJSONError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Shelly Gen3 webhooks use GET with ?apower= query params.
-	// Manual testing can use POST with {"apower":<watts>} JSON body.
+	// Accept POST with either a JSON body {"apower":<watts>} or ?apower= query param.
 	var watts float64
 	var parsed bool
 
