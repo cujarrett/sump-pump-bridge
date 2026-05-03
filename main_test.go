@@ -105,6 +105,25 @@ func TestWebhookHandlerQueryParam(t *testing.T) {
 	}
 }
 
+// TestWebhookHandlerGETQueryParam verifies Shelly Gen3 GET webhook format works.
+func TestWebhookHandlerGETQueryParam(t *testing.T) {
+	a := newTestApp(t, 50)
+	req := httptest.NewRequest(http.MethodGet, "/webhook?apower=350", nil)
+	w := httptest.NewRecorder()
+	a.webhookHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["running"] != true {
+		t.Errorf("expected running=true for 350W, got %v", resp["running"])
+	}
+}
+
 func TestWebhookHandlerNoBody(t *testing.T) {
 	a := newTestApp(t, 50)
 	req := httptest.NewRequest(http.MethodPost, "/webhook", nil)
@@ -117,7 +136,7 @@ func TestWebhookHandlerNoBody(t *testing.T) {
 
 func TestWebhookHandlerWrongMethod(t *testing.T) {
 	a := newTestApp(t, 50)
-	req := httptest.NewRequest(http.MethodGet, "/webhook", nil)
+	req := httptest.NewRequest(http.MethodPut, "/webhook", nil)
 	w := httptest.NewRecorder()
 	a.webhookHandler(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
