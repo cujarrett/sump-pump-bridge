@@ -202,7 +202,7 @@ func main() {
 	if natsURL == "" {
 		natsURL = "nats://localhost:4222"
 	}
-	threshold := 50.0
+	threshold := 300.0
 	if t := os.Getenv("WATTS_THRESHOLD"); t != "" {
 		if v, err := strconv.ParseFloat(t, 64); err == nil && v > 0 {
 			threshold = v
