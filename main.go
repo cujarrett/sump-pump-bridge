@@ -278,40 +278,6 @@ func main() {
 
 	log.Printf("sump-pump-bridge %s listening on :%s (threshold=%.0fW)", version, port, threshold)
 
-	// Polling fallback: if SHELLY_URL is set, poll PM1.GetStatus every POLL_INTERVAL (default 15s).
-	// This catches runs that the Shelly fails to deliver via webhook (repeat_period=0, no retry).
-	if shellyURL := os.Getenv("SHELLY_URL"); shellyURL != "" {
-		pollInterval := 15 * time.Second
-		if s := os.Getenv("POLL_INTERVAL"); s != "" {
-			if d, err := time.ParseDuration(s); err == nil && d > 0 {
-				pollInterval = d
-			}
-		}
-		httpClient := &http.Client{Timeout: 5 * time.Second}
-		go func() {
-			log.Printf("polling %s/rpc/PM1.GetStatus?id=0 every %v", shellyURL, pollInterval)
-			ticker := time.NewTicker(pollInterval)
-			defer ticker.Stop()
-			for range ticker.C {
-				resp, err := httpClient.Get(shellyURL + "/rpc/PM1.GetStatus?id=0")
-				if err != nil {
-					log.Printf("poll shelly: %v", err)
-					continue
-				}
-				var result struct {
-					APower float64 `json:"apower"`
-				}
-				decodeErr := json.NewDecoder(resp.Body).Decode(&result)
-				_ = resp.Body.Close()
-				if decodeErr != nil {
-					log.Printf("poll shelly decode: %v", decodeErr)
-					continue
-				}
-				a.processWatts(context.Background(), result.APower)
-			}
-		}()
-	}
-
 	srv := &http.Server{
 		Addr:              ":" + port,
 		Handler:           a.metricsMiddleware(mux),
