@@ -71,7 +71,7 @@ jobs:
   deploy:
     needs: build-and-push
     if: github.ref == 'refs/heads/main'
-    uses: cujarrett/homelab-tenants/.github/workflows/update-image-tag.yml@main
+    uses: cujarrett/homelab-workspaces/.github/workflows/update-image-tag.yml@main
     with:
       namespace: sump-pump
     secrets:
