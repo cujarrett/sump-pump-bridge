@@ -57,7 +57,6 @@ func (rw *statusResponseWriter) WriteHeader(code int) {
 }
 
 var metricsSkipPaths = map[string]struct{}{
-	"/health":      {},
 	"/healthz":     {},
 	"/favicon.ico": {},
 }
@@ -255,7 +254,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc("/webhook", a.webhookHandler)
 	mux.HandleFunc("/", notFoundHandler)
 
